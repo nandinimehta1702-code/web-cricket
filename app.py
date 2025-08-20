@@ -1,83 +1,83 @@
 #!/usr/bin/env python3
 """
-Web Cricket — Flask + Tailwind + HTMX
+Web Cricket — v3 (Flask + Tailwind + HTMX + avatars)
 
-v2 — Settings + Mobile + Better UX
-- Start screen to choose: player name, overs (1–20), difficulty (Easy/Med/Hard)
-- Live, friendly commentary ("Yay! You scored two")
-- 5 shots + wicket/4/6 reactions; scorecard at end
-- New Game button fixed (re-renders whole page)
-- Mobile-friendly; header logo + batter SVG
+Features
+- Start screen: player name, overs (1–20), difficulty (easy/med/hard)
+- Shot buttons (defend, cover, pull, straight, glance, slog)
+- Live commentary ("Yay! You scored two.", "SIX!", "Gone!")
+- Cartoon avatars: bowler reacts (happy on wicket, angry on 4/6)
+- Works on phone, deployable on Render with gunicorn
 
 Run locally:
   pip install flask
   python app.py
 Open: http://127.0.0.1:5000
 
-On phone (same Wi‑Fi):
-  python app.py  (it prints your LAN URL), or set host="0.0.0.0" below.
+Deploy (already set up): Procfile -> `web: gunicorn app:app`
 """
+
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
 from flask import Flask, render_template_string, request, session
 import random, uuid, socket
 
+# ------------ Flask ------------
 app = Flask(__name__)
-app.secret_key = "dev-secret-change-me"  # change if deploying
+app.secret_key = "dev-secret-change-me"  # set env SECRET_KEY in prod
 
-# ---------------------- Config ----------------------
+# ------------ Config ------------
 DEFAULT_OVERS = 5
 MAX_OVERS = 20
 
 SHOT_LABELS = {
-    'defend': 'Defend',
-    'cover': 'Cover Drive',
-    'pull': 'Pull Shot',
-    'straight': 'Straight Drive',
-    'glance': 'Glance',
-    'slog': 'Slog Sweep',
+    "defend": "Defend",
+    "cover": "Cover Drive",
+    "pull": "Pull Shot",
+    "straight": "Straight Drive",
+    "glance": "Glance",
+    "slog": "Slog Sweep",
 }
-BALL_OPTIONS = {'g': 'Good length','s': 'Short','y': 'Yorker'}
+BALL_OPTIONS = {"g": "Good length", "s": "Short", "y": "Yorker"}
 
-# Difficulty tweaks: weight multipliers per outcome type
+# Difficulty multipliers applied to outcome weights
 DIFF = {
-    'easy':  {'W': 0.7, 0: 0.9, 1: 1.1, 2: 1.1, 3: 1.1, 4: 1.2, 6: 1.25},
-    'medium':{'W': 1.0, 0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 6: 1.0},
-    'hard':  {'W': 1.25,0: 1.05,1: 0.95,2: 0.95,3: 0.95,4: 0.9, 6: 0.85},
+    "easy":  {"W": 0.7, 0: 0.9, 1: 1.1, 2: 1.1, 3: 1.1, 4: 1.2, 6: 1.25},
+    "medium":{"W": 1.0, 0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 6: 1.0},
+    "hard":  {"W": 1.25,0: 1.05,1: 0.95,2: 0.95,3: 0.95,4: 0.9, 6: 0.85},
 }
 
-AI_BALLING_MIX = ['g']*6 + ['s']*3 + ['y']*3
+AI_BALLING_MIX = ["g"] * 6 + ["s"] * 3 + ["y"] * 3
 
 # Outcome weights per (shot, ball)
-PROB = {
- ('defend','g'):[('W',1),(0,55),(1,38),(2,6)],
- ('defend','s'):[('W',2),(0,48),(1,38),(2,10),(4,1)],
- ('defend','y'):[('W',1),(0,60),(1,36),(2,3)],
- ('cover','g'):[('W',6),(0,20),(1,18),(2,12),(3,3),(4,30),(6,5)],
- ('cover','s'):[('W',7),(0,28),(1,20),(2,12),(3,3),(4,22),(6,3)],
- ('cover','y'):[('W',10),(0,30),(1,20),(2,9),(3,1),(4,18),(6,2)],
- ('pull','g'):[('W',10),(0,28),(1,16),(2,10),(3,4),(4,20),(6,12)],
- ('pull','s'):[('W',11),(0,20),(1,12),(2,10),(3,5),(4,22),(6,20)],
- ('pull','y'):[('W',14),(0,32),(1,14),(2,8),(3,2),(4,16),(6,6)],
- ('straight','g'):[('W',4),(0,22),(1,22),(2,22),(3,4),(4,22),(6,4)],
- ('straight','s'):[('W',6),(0,26),(1,24),(2,20),(3,3),(4,18),(6,3)],
- ('straight','y'):[('W',5),(0,24),(1,22),(2,20),(3,2),(4,20),(6,3)],
- ('glance','g'):[('W',3),(0,18),(1,46),(2,26),(3,2),(4,5)],
- ('glance','s'):[('W',5),(0,22),(1,44),(2,24),(3,3),(4,6)],
- ('glance','y'):[('W',4),(0,22),(1,48),(2,20),(3,1),(4,5)],
- ('slog','g'):[('W',14),(0,22),(1,10),(2,10),(3,6),(4,18),(6,20)],
- ('slog','s'):[('W',16),(0,20),(1,8),(2,8),(3,6),(4,18),(6,24)],
- ('slog','y'):[('W',18),(0,26),(1,8),(2,6),(3,2),(4,16),(6,22)],
+PROB: Dict[Tuple[str, str], List[Tuple[object, int]]] = {
+    ("defend","g"):[("W",1),(0,55),(1,38),(2,6)],
+    ("defend","s"):[("W",2),(0,48),(1,38),(2,10),(4,1)],
+    ("defend","y"):[("W",1),(0,60),(1,36),(2,3)],
+    ("cover","g"):[("W",6),(0,20),(1,18),(2,12),(3,3),(4,30),(6,5)],
+    ("cover","s"):[("W",7),(0,28),(1,20),(2,12),(3,3),(4,22),(6,3)],
+    ("cover","y"):[("W",10),(0,30),(1,20),(2,9),(3,1),(4,18),(6,2)],
+    ("pull","g"):[("W",10),(0,28),(1,16),(2,10),(3,4),(4,20),(6,12)],
+    ("pull","s"):[("W",11),(0,20),(1,12),(2,10),(3,5),(4,22),(6,20)],
+    ("pull","y"):[("W",14),(0,32),(1,14),(2,8),(3,2),(4,16),(6,6)],
+    ("straight","g"):[("W",4),(0,22),(1,22),(2,22),(3,4),(4,22),(6,4)],
+    ("straight","s"):[("W",6),(0,26),(1,24),(2,20),(3,3),(4,18),(6,3)],
+    ("straight","y"):[("W",5),(0,24),(1,22),(2,20),(3,2),(4,20),(6,3)],
+    ("glance","g"):[("W",3),(0,18),(1,46),(2,26),(3,2),(4,5)],
+    ("glance","s"):[("W",5),(0,22),(1,44),(2,24),(3,3),(4,6)],
+    ("glance","y"):[("W",4),(0,22),(1,48),(2,20),(3,1),(4,5)],
+    ("slog","g"):[("W",14),(0,22),(1,10),(2,10),(3,6),(4,18),(6,20)],
+    ("slog","s"):[("W",16),(0,20),(1,8),(2,8),(3,6),(4,18),(6,24)],
+    ("slog","y"):[("W",18),(0,26),(1,8),(2,6),(3,2),(4,16),(6,22)],
 }
 
-# ---------------------- Models ----------------------
-from dataclasses import dataclass
+# ------------ Models ------------
 @dataclass
 class Settings:
     player: str = "Player"
     overs: int = DEFAULT_OVERS
-    difficulty: str = 'medium'  # easy/medium/hard
+    difficulty: str = "medium"  # easy/medium/hard
 
 @dataclass
 class Innings:
@@ -99,19 +99,18 @@ class Game:
     inn: Innings = field(default_factory=Innings)
     commentary: List[str] = field(default_factory=list)
     over: bool = False
+    last_event: str = "idle"   # 'idle' | 'dot' | 'run' | 'big' | 'wicket'
 
 GAMES: Dict[str, Game] = {}
 
-# ---------------------- Helpers ----------------------
-
+# ------------ Helpers ------------
 def weighted_choice(pairs, diff:dict):
-    # apply difficulty multipliers
     weighted = []
     for outcome, w in pairs:
-        key = outcome if outcome=='W' else int(outcome)
+        key = outcome if outcome == "W" else int(outcome)
         weighted.append((outcome, w * diff[key]))
-    total = sum(w for _,w in weighted)
-    r = random.uniform(0,total)
+    total = sum(w for _, w in weighted)
+    r = random.uniform(0, total)
     upto = 0
     for outcome, w in weighted:
         if upto + w >= r:
@@ -119,7 +118,7 @@ def weighted_choice(pairs, diff:dict):
         upto += w
     return weighted[-1][0]
 
-# ---------------------- Templates ----------------------
+# ------------ Templates ------------
 BASE = """
 <!doctype html>
 <html lang="en">
@@ -137,6 +136,22 @@ BASE = """
       <h1 class="text-3xl font-bold tracking-tight">Web Cricket</h1>
     </div>
     <p class="text-sm text-slate-500">Bat ball-by-ball. Pick overs, pick vibe, and play.</p>
+
+    {% set batter_img = 'images/batter_idle.svg' if last_event in ['idle','dot','run'] else 'images/batter_swing.svg' %}
+    {% if last_event == 'wicket' %}
+      {% set bowler_img = 'images/bowler_happy.svg' %}
+    {% elif last_event == 'big' %}
+      {% set bowler_img = 'images/bowler_angry.svg' %}
+    {% else %}
+      {% set bowler_img = 'images/bowler_idle.svg' %}
+    {% endif %}
+
+    <!-- Avatars row -->
+    <div class="mt-4 flex items-center justify-between">
+      <img src="{{ url_for('static', filename=bowler_img) }}" class="w-24 h-24 md:w-32 md:h-32" alt="bowler">
+      <div class="text-xs md:text-sm text-slate-400">pitch</div>
+      <img src="{{ url_for('static', filename=batter_img) }}" class="w-24 h-24 md:w-32 md:h-32" alt="batter">
+    </div>
 
     <div class="mt-5 grid gap-4">
       <div class="rounded-2xl bg-white shadow p-5">
@@ -212,67 +227,75 @@ CONTROLS_SHOTS = """
 </div>
 """
 
-# ---------------------- Views ----------------------
-
+# ------------ Views / render helpers ------------
 def _scoreboard(game:Game):
     inn = game.inn; s = game.settings
-    return render_template_string(SCORE,
+    return render_template_string(
+        SCORE,
         r=inn.runs, w=inn.wickets, otext=inn.overs_text(),
         left=inn.balls_left(s.overs), player=s.player, diff=s.difficulty.title(),
-        gid=game.id, over=game.over)
-
+        gid=game.id, over=game.over
+    )
 
 def _controls_settings():
     return render_template_string(CONTROLS_SETTINGS, def_ov=DEFAULT_OVERS)
 
-
 def _controls_shots(game:Game):
     s = game.settings
-    return render_template_string(CONTROLS_SHOTS, shots=list(SHOT_LABELS.items()),
-                                  gid=game.id, over=game.over,
-                                  player=s.player, overs=s.overs, difficulty=s.difficulty)
-
+    return render_template_string(
+        CONTROLS_SHOTS,
+        shots=list(SHOT_LABELS.items()),
+        gid=game.id, over=game.over,
+        player=s.player, overs=s.overs, difficulty=s.difficulty
+    )
 
 def _render(game:Game|None, show_settings=False):
     if show_settings or game is None:
         scoreboard = render_template_string(SCORE, r=0,w=0,otext="0.0",left=0,player="-",diff="-",gid="-",over=False)
         controls = _controls_settings()
         commentary = []
+        last_event = "idle"
     else:
         scoreboard = _scoreboard(game)
         controls = _controls_shots(game)
         commentary = game.commentary[-80:]
-    return render_template_string(BASE, scoreboard=scoreboard, controls=controls, commentary=commentary)
-
+        last_event = game.last_event
+    return render_template_string(BASE, scoreboard=scoreboard, controls=controls, commentary=commentary, last_event=last_event)
 
 def _new_game(player:str, overs:int, difficulty:str) -> Game:
     gid = str(uuid.uuid4())
-    g = Game(id=gid, settings=Settings(player=player or 'Player', overs=max(1,min(MAX_OVERS,overs)), difficulty=difficulty))
+    g = Game(id=gid, settings=Settings(
+        player=player or "Player",
+        overs=max(1, min(MAX_OVERS, overs)),
+        difficulty=difficulty if difficulty in DIFF else "medium"
+    ))
     GAMES[gid] = g
-    session['gid'] = gid
+    session["gid"] = gid
     return g
 
+# ------------ Routes ------------
 @app.route("/")
 def index():
-    gid = session.get('gid')
+    gid = session.get("gid")
     game = GAMES.get(gid) if gid else None
     return _render(game, show_settings=(game is None))
 
 @app.post("/new")
 def new():
-    player = (request.form.get('player') or '').strip() or 'Player'
-    overs = int(request.form.get('overs', DEFAULT_OVERS))
-    difficulty = request.form.get('difficulty','medium').lower()
+    player = (request.form.get("player") or "").strip() or "Player"
+    overs = int(request.form.get("overs", DEFAULT_OVERS))
+    difficulty = request.form.get("difficulty", "medium").lower()
     game = _new_game(player, overs, difficulty)
+    game.last_event = "idle"
     return _render(game)
 
 @app.post("/play")
 def play():
-    gid = request.form.get('game_id'); game = GAMES.get(gid)
+    gid = request.form.get("game_id"); game = GAMES.get(gid)
     if not game: return _render(None, show_settings=True)
     if game.over: return _render(game)
 
-    shot = request.form.get('shot')
+    shot = request.form.get("shot")
     if shot not in SHOT_LABELS: return _render(game)
 
     ai_ball = random.choice(AI_BALLING_MIX)
@@ -280,24 +303,33 @@ def play():
     outcome = weighted_choice(matrix, DIFF[game.settings.difficulty])
 
     msg_base = f"Ball {game.inn.over_ball()} — {game.settings.player} plays {SHOT_LABELS[shot]} to a {BALL_OPTIONS[ai_ball]}: "
-    if outcome == 'W':
+    if outcome == "W":
         game.inn.wickets += 1
-        game.commentary.append(msg_base + random.choice(["Gone!","Bowled!","Edged and taken.","Cleaned up."]))
+        game.commentary.append(msg_base + random.choice(["Gone!", "Bowled!", "Edged and taken.", "Cleaned up."]))
+        game.last_event = "wicket"
     else:
         r = int(outcome)
         game.inn.runs += r
-        phrases = {0:"dot ball.",1:"Yay! You scored one.",2:"Nice! You scored two.",3:"Three runs, well run!",4:"FOUR! Gorgeous timing.",6:"SIX! Out of the park!"}
+        phrases = {
+            0:"dot ball.",
+            1:"Yay! You scored one.",
+            2:"Nice! You scored two.",
+            3:"Three runs, well run!",
+            4:"FOUR! Gorgeous timing.",
+            6:"SIX! Out of the park!",
+        }
         game.commentary.append(msg_base + phrases.get(r, f"{r} run(s)."))
+        game.last_event = ("big" if r >= 4 else ("run" if r > 0 else "dot"))
 
     game.inn.balls += 1
-    if game.inn.balls >= game.settings.overs*6 or game.inn.wickets >= 10:
+    if game.inn.balls >= game.settings.overs * 6 or game.inn.wickets >= 10:
         game.over = True
         game.commentary.append(f"Innings complete — {game.inn.runs}/{game.inn.wickets} in {game.inn.overs_text()} overs.")
 
     return _render(game)
 
+# ------------ Main ------------
 if __name__ == "__main__":
-    # Print LAN URL so you can open on your phone (same Wi‑Fi)
     try:
         host_ip = socket.gethostbyname(socket.gethostname())
     except Exception:
