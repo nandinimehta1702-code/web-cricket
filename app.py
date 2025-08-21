@@ -25,6 +25,13 @@ import random, uuid, socket
 
 # ------------ Flask ------------
 app = Flask(__name__)
+from flask import send_from_directory
+
+@app.get("/arcade")
+def arcade():
+    # serves PythonPractice/static/game/index.html
+    return send_from_directory("static/game", "index.html")
+
 app.secret_key = "dev-secret-change-me"  # set env SECRET_KEY in prod
 
 # ------------ Config ------------
@@ -134,6 +141,13 @@ BASE = """
     <div class="flex items-center gap-3">
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M4 20l8-8" stroke="#ef4444" stroke-width="2"/><circle cx="14" cy="6" r="3" fill="#f59e0b"/></svg>
       <h1 class="text-3xl font-bold tracking-tight">Web Cricket</h1>
+      <div class="mt-2">
+  <a href="/arcade"
+     class="inline-block text-sm px-3 py-1 rounded-xl border border-slate-300 hover:bg-slate-100">
+    🎮 Play Arcade (beta)
+  </a>
+</div>
+
     </div>
     <p class="text-sm text-slate-500">Bat ball-by-ball. Pick overs, pick vibe, and play.</p>
 
