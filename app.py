@@ -1,40 +1,29 @@
-#!/usr/bin/env python3
-"""
-Web Cricket — v3 (Flask + Tailwind + HTMX + avatars)
-
-Features
-- Start screen: player name, overs (1–20), difficulty (easy/med/hard)
-- Shot buttons (defend, cover, pull, straight, glance, slog)
-- Live commentary ("Yay! You scored two.", "SIX!", "Gone!")
-- Cartoon avatars: bowler reacts (happy on wicket, angry on 4/6)
-- Works on phone, deployable on Render with gunicorn
-
-Run locally:
-  pip install flask
-  python app.py
-Open: http://127.0.0.1:5000
-
-Deploy (already set up): Procfile -> `web: gunicorn app:app`
-"""
-
 from __future__ import annotations
+
+# ---- stdlib ----
+import os
+import random
+import uuid
+import socket
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
-from flask import Flask, render_template_string, request, session
-import random, uuid, socket
 
-# ------------ Flask ------------
+# ---- flask ----
+from flask import (
+    Flask,
+    render_template_string,
+    request,
+    session,
+    send_from_directory,
+)
+
 app = Flask(__name__)
-from flask import send_from_directory
-
-@app.get("/arcade")
-def arcade():
-    # serves PythonPractice/static/game/index.html
-    return send_from_directory("static/game", "index.html")
-
 app.secret_key = "dev-secret-change-me"  # set env SECRET_KEY in prod
 
-# ------------ Config ------------
+# =========================================================
+#                    WEB CRICKET (HTMX UI)
+# =========================================================
+
 DEFAULT_OVERS = 5
 MAX_OVERS = 20
 
@@ -142,12 +131,11 @@ BASE = """
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M4 20l8-8" stroke="#ef4444" stroke-width="2"/><circle cx="14" cy="6" r="3" fill="#f59e0b"/></svg>
       <h1 class="text-3xl font-bold tracking-tight">Web Cricket</h1>
       <div class="mt-2">
-  <a href="/arcade"
-     class="inline-block text-sm px-3 py-1 rounded-xl border border-slate-300 hover:bg-slate-100">
-    🎮 Play Arcade (beta)
-  </a>
-</div>
-
+        <a href="/arcade"
+           class="inline-block text-sm px-3 py-1 rounded-xl border border-slate-300 hover:bg-slate-100">
+          🎮 Play Arcade (beta)
+        </a>
+      </div>
     </div>
     <p class="text-sm text-slate-500">Bat ball-by-ball. Pick overs, pick vibe, and play.</p>
 
@@ -341,6 +329,26 @@ def play():
         game.commentary.append(f"Innings complete — {game.inn.runs}/{game.inn.wickets} in {game.inn.overs_text()} overs.")
 
     return _render(game)
+
+# ---- PWA bits ----
+
+@app.route("/service-worker.js")
+def service_worker():
+    # serve from project root so scope = '/' (controls /arcade and /static)
+    response = send_from_directory(
+        os.path.dirname(os.path.abspath(__file__)),
+        "service-worker.js",
+        mimetype="application/javascript",
+    )
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+@app.get("/arcade")
+def arcade():
+    # serves static/game/index.html
+    return send_from_directory("static/game", "index.html")
 
 # ------------ Main ------------
 if __name__ == "__main__":

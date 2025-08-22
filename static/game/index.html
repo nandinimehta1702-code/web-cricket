@@ -1,10 +1,15 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/images/icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/static/images/icons/icon-512.png">
+<meta name="theme-color" content="#0b1220">
+<link rel="manifest" href="/static/game/manifest.json">
+<meta name="theme-color" content="#0b1220">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Cricket Arcade</title>
-  <!-- Phaser 3 -->
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
   <style>
     html,body{margin:0;height:100%;background:#0b1220;color:#e6edf6;font-family:system-ui,Segoe UI,Roboto,Inter,sans-serif}
@@ -16,226 +21,366 @@
     .tbtn{background:#111827;border:1px solid #293241;border-radius:10px;padding:10px 14px;color:#e6edf6}
     @media (pointer:coarse){ .btns{display:flex} }
     @media (pointer:fine){ .btns{display:none} }
+
+    /* character picker */
+    #charpick{position:fixed;inset:0;background:#0b1220;display:flex;align-items:center;justify-content:center;z-index:50}
+    #charpick .card{background:#0f172a;border:1px solid #1f2937;border-radius:16px;padding:18px 22px;min-width:280px;text-align:center;color:#e6edf6}
+    #charpick .card h3{margin:0 0 10px;font:600 18px system-ui}
+    #charpick .row{display:flex;gap:10px;justify-content:center}
+    #charpick button{padding:10px 14px;border-radius:10px;border:1px solid #293241;background:#111827;color:#e6edf6;cursor:pointer}
+
+    /* top bar (overs + new game) */
+    #topbar{position:absolute;top:10px;right:10px;display:flex;gap:8px;z-index:40}
+    #topbar select, #topbar button{
+      background:#111827;border:1px solid #293241;color:#e6edf6;border-radius:8px;padding:6px 10px
+    }
   </style>
 </head>
 <body>
-<div id="game"></div>
-<div class="hud" id="hud"></div>
-<div class="help">← / → (or A / D) to move • SPACE to swing</div>
-<div class="btns">
-  <button class="tbtn" id="leftBtn">◀</button>
-  <button class="tbtn" id="hitBtn">HIT</button>
-  <button class="tbtn" id="rightBtn">▶</button>
-</div>
-<script>
-(() => {
-  const W = 800, H = 450;
-  const PITCH_XL = 80, PITCH_XR = W-80;
-  const POP = { // physics-ish constants
-    ballSpeed: 260,   // base delivery speed
-    spawnEveryMs: 1650,
-    batWindowMs: 420,
-    batCooldownMs: 520,
-    playerSpeed: 260,
-    overBalls: 6,
-    totalOvers: 2,    // tweak me
-  };
+  <div id="game"></div>
+  <div class="hud" id="hud"></div>
+  <div id="topbar">
+    <select id="oversSel">
+      <option value="1">1 over</option>
+      <option value="2" selected>2 overs</option>
+      <option value="5">5 overs</option>
+    </select>
+    <button id="newBtn">New Game</button>
+  </div>
+  <div class="help">← / → (or A / D) to move • SPACE to swing</div>
+  <div class="btns">
+    <button class="tbtn" id="leftBtn">◀</button>
+    <button class="tbtn" id="hitBtn">HIT</button>
+    <button class="tbtn" id="rightBtn">▶</button>
+  </div>
 
-  let state = {
-    runs: 0, wkts: 0, balls: 0, over: 0,
-    swinging: false, lastSwingT: 0,
-    gameOver:false
-  };
+  <!-- Character picker -->
+  <div id="charpick">
+    <div class="card">
+      <h3>Choose your player</h3>
+      <div class="row">
+        <button id="pickBoy">Boy</button>
+        <button id="pickGirl">Girl</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    // picker wiring
+    (function setupPicker(){
+      const saved = localStorage.getItem('avatar');
+      if (saved) document.getElementById('charpick').style.display='none';
+      document.getElementById('pickBoy').onclick  = ()=>{ localStorage.setItem('avatar','boy');  document.getElementById('charpick').style.display='none'; };
+      document.getElementById('pickGirl').onclick = ()=>{ localStorage.setItem('avatar','girl'); document.getElementById('charpick').style.display='none'; };
+    })();
+  </script>
 
-  // utility rng
-  const rnd = (min,max) => Math.random()*(max-min)+min;
+  <!-- Phaser game -->
+  <script>
+  (() => {
+    const W = 800, H = 450;
+    const PITCH_XL = 80, PITCH_XR = W-80;
 
-  class Main extends Phaser.Scene {
-    constructor(){ super('main'); }
-    preload(){}
+    const POP = {
+      ballSpeed: 260,
+      spawnEveryMs: 1650,
+      batCooldownMs: 520,
+      playerSpeed: 260,
+      overBalls: 6,
+      get totalOvers(){ return parseInt(localStorage.getItem('overs') || '2', 10); }
+    };
 
-    create(){
-      // background
-      this.add.rectangle(W/2,H/2,W,H,0x0f172a);
-      this.add.rectangle(W/2,H*0.62,W*0.86,8,0x334155); // pitch line
-      this.add.rectangle(W/2,H*0.78,W*0.86,120,0x0a0f1a); // outfield
+    let state = { runs:0, wkts:0, balls:0, over:0, swinging:false, lastSwingT:0, gameOver:false };
 
-      // bowler & batter (simple shapes for now)
-      this.bowler = this.add.circle(W/2, 70, 24, 0x60a5fa).setStrokeStyle(3,0x0b1220);
-      this.add.rectangle(W/2, 98, 14, 30, 0x93c5fd).setStrokeStyle(2,0x0b1220);
+    class Main extends Phaser.Scene {
+      constructor(){ super('main'); }
 
-      this.playerXMin = PITCH_XL; this.playerXMax = PITCH_XR;
-      this.batter = this.add.circle(W/2, H-84, 24, 0xfcd34d).setStrokeStyle(3,0x0b1220);
-      this.bat = this.add.rectangle(W/2+26, H-84, 8, 48, 0xfb7185).setOrigin(0.5,1);
-
-      // wicket zone behind batter
-      this.wicketZone = new Phaser.Geom.Rectangle(W/2-30, H-90, 60, 12);
-      this.add.rectangle(this.wicketZone.x+30, this.wicketZone.y+6, this.wicketZone.width, this.wicketZone.height, 0x172554, 0.6);
-
-      // physics group for balls
-      this.balls = this.physics.add.group({ allowGravity:false });
-
-      // keyboard
-      this.cursors = this.input.keyboard.createCursorKeys();
-      this.keys = this.input.keyboard.addKeys({A:Phaser.Input.Keyboard.KeyCodes.A,D:Phaser.Input.Keyboard.KeyCodes.D,SPACE:Phaser.Input.Keyboard.KeyCodes.SPACE});
-
-      // collisions (bat is fake collider -> we compute manually when swinging)
-      this.time.addEvent({ delay: POP.spawnEveryMs, loop:true, callback: ()=>this.spawnBall() });
-
-      // HUD text
-      this.hudEl = document.getElementById('hud');
-      this.updateHUD();
-
-      // mobile buttons
-      const leftBtn = document.getElementById('leftBtn');
-      const rightBtn = document.getElementById('rightBtn');
-      const hitBtn = document.getElementById('hitBtn');
-      let leftHeld=false, rightHeld=false;
-      leftBtn.onpointerdown = ()=> leftHeld=true;
-      leftBtn.onpointerup = leftBtn.onpointercancel = ()=> leftHeld=false;
-      rightBtn.onpointerdown = ()=> rightHeld=true;
-      rightBtn.onpointerup = rightBtn.onpointercancel = ()=> rightHeld=false;
-      hitBtn.onclick = ()=> this.trySwing();
-
-      this.input.on('pointerdown', (p)=>{
-        // tap left/right half to move on mobile
-        if(p.x < W/2) leftHeld = true; else rightHeld = true;
-        setTimeout(()=>{ leftHeld=false; rightHeld=false; }, 140);
-      });
-
-      this.leftHeldRef = ()=>leftHeld;
-      this.rightHeldRef = ()=>rightHeld;
-    }
-
-    spawnBall(){
-      if(state.gameOver) return;
-      // randomize line/length a bit
-      const lineX = rnd(PITCH_XL+20, PITCH_XR-20);
-      const b = this.add.circle(W/2, 110, 6, 0xef4444);
-      const ball = this.physics.add.existing(b);
-      ball.body.allowGravity = false;
-      ball.body.setVelocity((lineX - W/2)*0.35, POP.ballSpeed);
-      ball.hit = false;
-      this.balls.add(b);
-      // life timeout
-      this.time.delayedCall(6000, ()=> b.destroy());
-    }
-
-    trySwing(){
-      if(state.gameOver) return;
-      const now = this.time.now;
-      if(state.swinging) return;
-      if(now - state.lastSwingT < POP.batCooldownMs) return;
-
-      state.swinging = true;
-      state.lastSwingT = now;
-
-      // swing anim
-      this.tweens.add({ targets:this.bat, angle:-65, duration:140, yoyo:true, onComplete:()=>{ state.swinging=false; } });
-
-      // check contact in a short window
-      this.time.delayedCall(80, ()=> this.checkContact());
-    }
-
-    checkContact(){
-      // contact area near bat tip
-      const bx = this.bat.x + Math.cos(Phaser.Math.DegToRad(this.bat.angle-90))*28;
-      const by = this.bat.y + Math.sin(Phaser.Math.DegToRad(this.bat.angle-90))*28;
-      const zone = new Phaser.Geom.Circle(bx, by, 30);
-
-      this.balls.children.each((bObj)=>{
-        const b = bObj;
-        if(!b || !b.body || b.hit) return;
-        if(Phaser.Geom.Intersects.CircleToCircle(zone, new Phaser.Geom.Circle(b.x,b.y,8))){
-          b.hit = true;
-          // compute launch
-          const perfect = Math.abs(b.x - this.batter.x) < 20;
-          const power = perfect ? rnd(420,520) : rnd(280,380);
-          const angle = perfect ? rnd(-18,-8) : rnd(-10,8);
-          const vx = (b.x - this.batter.x)*2 + rnd(-40,40);
-          b.body.setVelocity(vx, -power);
-
-          // score based on exit speed/angle
-          const speed = Math.hypot(vx, power);
-          let runs = 1;
-          if(speed > 520 || perfect) runs = 6;
-          else if(speed > 460) runs = 4;
-          else if(speed > 360) runs = 2;
-
-          state.runs += runs;
-          this.flashMsg(runs>=4 ? (runs===6? "SIX! 💥" : "FOUR! ✨") : (runs===2? "Two runs." : "Single."));
-          this.ballDone();
-        }
-      });
-    }
-
-    ballDone(){
-      state.balls++;
-      if(state.balls % POP.overBalls === 0){
-        state.over++;
-        if(state.over >= POP.totalOvers){ this.endInnings(); return; }
-        this.flashMsg(`Over ${state.over}/${POP.totalOvers}.`);
+      preload(){
+        // images
+        this.load.image('batter_boy',  '/static/game/assets/batter_boy.png');
+        this.load.image('batter_girl', '/static/game/assets/batter_girl.png');
+        this.load.image('bowler',      '/static/game/assets/bowler.png');
+        this.load.image('bat',         '/static/game/assets/bat.png');
+        this.load.image('ball',        '/static/game/assets/ball.png');
+        // optional audio (ok if missing; you’ll just see console 404s)
+        this.load.audio('whoosh', '/static/game/assets/whoosh.mp3');
+        this.load.audio('crack',  '/static/game/assets/crack.mp3');
+        this.load.audio('crowd',  '/static/game/assets/crowd.mp3');
       }
-      this.updateHUD();
+
+      create(){
+        const W2 = W/2;
+
+        // simple pitch bg
+        this.add.rectangle(W2,H/2,W,H,0x0f172a);
+        this.add.rectangle(W2,H*0.62,W*0.86,8,0x334155);
+        this.add.rectangle(W2,H*0.78,W*0.86,120,0x0a0f1a);
+
+        // bowler
+        this.bowler = this.add.image(W2, 120, 'bowler').setOrigin(0.5,1).setDisplaySize(90,120);
+
+        // avatar
+        const choice = (localStorage.getItem('avatar') || 'boy') === 'girl' ? 'batter_girl' : 'batter_boy';
+        this.player  = this.add.container(W2, H-110);
+        this.batter  = this.add.image(0, 0, choice).setOrigin(0.5,1).setDisplaySize(110,140);
+        this.batImg  = this.add.image(28, -16, 'bat').setOrigin(0.1,0.95).setDisplaySize(14,70);
+        this.player.add([this.batter, this.batImg]);
+
+        // wicket zone
+        this.wicketZone = new Phaser.Geom.Rectangle(W2-30, H-90, 60, 12);
+        this.add.rectangle(this.wicketZone.x+30, this.wicketZone.y+6, this.wicketZone.width, this.wicketZone.height, 0x172554, 0.6);
+
+        // physics group for balls
+        this.balls = this.physics.add.group({ allowGravity:false });
+
+        // input
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.keys = this.input.keyboard.addKeys({
+          A:Phaser.Input.Keyboard.KeyCodes.A,
+          D:Phaser.Input.Keyboard.KeyCodes.D,
+          SPACE:Phaser.Input.Keyboard.KeyCodes.SPACE
+        });
+
+        // mobile controls
+        const leftBtn = document.getElementById('leftBtn');
+        const rightBtn = document.getElementById('rightBtn');
+        const hitBtn = document.getElementById('hitBtn');
+        let leftHeld=false, rightHeld=false;
+        leftBtn.onpointerdown = ()=> leftHeld=true;
+        leftBtn.onpointerup = leftBtn.onpointercancel = ()=> leftHeld=false;
+        rightBtn.onpointerdown = ()=> rightHeld=true;
+        rightBtn.onpointerup = rightBtn.onpointercancel = ()=> rightHeld=false;
+        hitBtn.onclick = ()=> this.trySwing();
+        this.input.on('pointerdown', (p)=>{ if(p.x < W/2) leftHeld=true; else rightHeld=true; setTimeout(()=>{ leftHeld=false; rightHeld=false; }, 140); });
+        this.leftHeldRef = ()=>leftHeld; this.rightHeldRef = ()=>rightHeld;
+
+        // timing meter
+        this.meter = { v: 0.0, dir: 1 };
+        this.meterG = this.add.graphics({ x: W2 - 80, y: H - 36 }).setDepth(20);
+        this.drawMeter = (highlight=false) => {
+          const g = this.meterG; g.clear();
+          g.fillStyle(0x1f2937, 1).fillRoundedRect(0, 0, 160, 10, 5);      // track
+          g.fillStyle(0x10b981, .6).fillRoundedRect(70, 0, 20, 10, 5);     // perfect zone
+          const x = Phaser.Math.Linear(6, 154, Phaser.Math.Clamp(this.meter.v,0,1));
+          g.fillStyle(highlight ? 0xf59e0b : 0x93c5fd, 1).fillRoundedRect(x-2, -4, 4, 18, 2);
+        };
+        this.drawMeter();
+
+        // spawn loop (store handle so we can restart cleanly)
+        this.scheduleSpawn();
+
+        // HUD
+        this.hudEl = document.getElementById('hud'); this.updateHUD();
+      }
+
+      scheduleSpawn(){
+        if (this.spawnEvt) this.spawnEvt.remove(false);
+        this.spawnEvt = this.time.addEvent({
+          delay: POP.spawnEveryMs + Phaser.Math.Between(-250,250),
+          loop: true,
+          callback: ()=> this.spawnBall()
+        });
+      }
+
+      // bowling with types + swing
+      spawnBall(){
+        if(state.gameOver) return;
+
+        const W2 = W/2;
+        const types = ['good','yorker','bouncer'];
+        const t = Phaser.Utils.Array.GetRandom(types);
+
+        let targetX = Phaser.Math.Between(PITCH_XL+20, PITCH_XR-20);
+        let vy = POP.ballSpeed;
+        let xCurve = 0;
+        let startY = this.bowler.y + 16;
+
+        if (t === 'yorker')  { vy = 300; startY = this.bowler.y + 10; }
+        if (t === 'bouncer') { vy = 220; startY = this.bowler.y;      }
+        if (Math.random() < 0.55) xCurve = Phaser.Math.Between(-90, 90); // inswing/outswing
+
+        const img = this.add.image(this.bowler.x, startY, 'ball').setDisplaySize(22,22).setDepth(5);
+        this.physics.add.existing(img);
+        img.body.setAllowGravity(false);
+        img.body.setCircle(11);
+
+        const vx0 = (targetX - W2) * 0.45;
+        img.body.setVelocity(vx0, vy);
+        img.hit = false;
+        this.balls.add(img);
+
+        // swing curve
+        this.tweens.addCounter({ from:0, to:xCurve, duration:900, onUpdate: tw => img.body.setVelocityX(vx0 + tw.getValue()) });
+
+        this.time.delayedCall(6000, ()=> img.destroy());
+      }
+
+      trySwing(){
+        if(state.gameOver) return;
+        const now = this.time.now;
+        if(state.swinging) return;
+        if(now - state.lastSwingT < POP.batCooldownMs) return;
+
+        state.swinging = true;
+        state.lastSwingT = now;
+
+        this.sound.play('whoosh', { volume: 0.35 });
+        this.tweens.add({ targets:this.batImg, angle:-65, duration:140, yoyo:true, onComplete:()=>{ state.swinging=false; } });
+        this.time.delayedCall(90, ()=> this.checkContact());
+      }
+
+      checkContact(){
+        const b = this.batImg;
+        const tipLocal = new Phaser.Math.Vector2(b.x, b.y - (b.displayHeight ? b.displayHeight*0.35 : 30));
+        Phaser.Math.RotateAround(tipLocal, 0, 0, Phaser.Math.DegToRad(b.angle));
+        const tip = tipLocal.clone().add(new Phaser.Math.Vector2(this.player.x, this.player.y));
+        const zone = new Phaser.Geom.Circle(tip.x, tip.y, 28);
+
+        this.balls.children.each(ball=>{
+          if (!ball || !ball.body || ball.hit) return;
+          if (Phaser.Geom.Intersects.CircleToCircle(zone, new Phaser.Geom.Circle(ball.x, ball.y, 10))){
+            ball.hit = true;
+
+            // timing quality
+            const timing = 1 - Math.min(1, Math.abs(this.meter.v - 0.5) / 0.5);
+            this.drawMeter(true);
+
+            const perfect = Math.abs(ball.x - this.player.x) < 28;
+            const timingBoost = Phaser.Math.Linear(0.85, 1.25, timing);
+            const basePower = perfect ? Phaser.Math.Between(420,520) : Phaser.Math.Between(280,380);
+            const power = basePower * timingBoost;
+            const vx = (ball.x - this.player.x)*2 + Phaser.Math.Between(-40,40);
+
+            ball.body.setVelocity(vx, -power);
+
+            // particles
+            const puff = this.add.particles(ball.x, ball.y, 'ball', {
+              speed: { min:60, max:140 },
+              scale: { start:0.6, end:0 },
+              lifespan: 450,
+              quantity: 6,
+              angle: { min:210, max:330 }
+            });
+            this.time.delayedCall(300, ()=> puff.destroy());
+
+            this.sound.play('crack', { volume: 0.5 });
+
+            const speed = Math.hypot(vx, power);
+            let runs = 1;
+            if (speed > 520 || (perfect && timing>0.85)) runs = 6;
+            else if (speed > 460) runs = 4;
+            else if (speed > 360) runs = 2;
+
+            if (runs === 6) this.sound.play('crowd', { volume: 0.6 });
+
+            state.runs += runs;
+            this.flashMsg(
+              runs>=4 ? (runs===6 ? "PERFECT SIX! 💥" : "FOUR! ✨")
+                      : (runs===2 ? "Two runs." : (timing>0.8 ? "Nice timing." : "Single."))
+            );
+            this.ballDone();
+          }
+        });
+      }
+
+      ballDone(){
+        state.balls++;
+        if(state.balls % POP.overBalls === 0){
+          state.over++;
+          if(state.over >= POP.totalOvers){ this.endInnings(); return; }
+          this.flashMsg(`Over ${state.over}/${POP.totalOvers}.`);
+        }
+        this.updateHUD();
+      }
+
+      wicket(){
+        state.wkts++;
+        this.flashMsg("Bowled! 🧹");
+        this.ballDone();
+        if(state.wkts >= 10){ this.endInnings(); }
+      }
+
+      endInnings(){
+        state.gameOver = true;
+        this.flashMsg(`Innings complete: ${state.runs}/${state.wkts}`);
+      }
+
+      updateHUD(){
+        const oBalls = (state.over*POP.overBalls);
+        const ballsThisOver = state.balls - oBalls;
+        const overText = `${state.over}.${ballsThisOver}`;
+        const left = POP.totalOvers*POP.overBalls - state.balls;
+        document.getElementById('hud').innerHTML =
+          `<b>Score:</b> ${state.runs}/${state.wkts} &nbsp; • &nbsp; <b>Overs:</b> ${overText} &nbsp; • &nbsp; <b>Balls left:</b> ${left}`;
+      }
+
+      flashMsg(txt){
+        const t = this.add.text(W/2, H*0.3, txt, {fontFamily:'system-ui,Segoe UI', fontSize: 22, color:'#e6edf6'})
+                     .setAlpha(0).setOrigin(0.5);
+        this.tweens.add({targets:t, alpha:1, y:t.y-10, duration:200});
+        this.time.delayedCall(1100, ()=> t.destroy());
+      }
+
+      update(_, dt){
+        // meter oscillation
+        const rate = 0.75;
+        this.meter.v += this.meter.dir * rate * (dt/1000);
+        if (this.meter.v > 1) { this.meter.v = 1; this.meter.dir = -1; }
+        if (this.meter.v < 0) { this.meter.v = 0; this.meter.dir =  1; }
+        this.drawMeter(false);
+
+        // movement
+        const speed = POP.playerSpeed;
+        const left  = this.cursors.left.isDown || this.keys.A.isDown || this.leftHeldRef();
+        const right = this.cursors.right.isDown || this.keys.D.isDown || this.rightHeldRef();
+        if(left && !right)      this.player.x = Math.max(PITCH_XL, this.player.x - speed*dt/1000);
+        else if(right && !left) this.player.x = Math.min(PITCH_XR, this.player.x + speed*dt/1000);
+        this.batter.setFlipX(this.player.x < W/2);
+        if(Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.trySwing();
+
+        // wicket / dead ball checks
+        this.balls.children.each(ball=>{
+          if(!ball || !ball.body || ball.hit) return;
+          if(ball.y > this.wicketZone.y && ball.x > this.wicketZone.x && ball.x < this.wicketZone.x + this.wicketZone.width){
+            ball.hit = true; ball.destroy(); this.wicket();
+          } else if(ball.y > H+20){ ball.destroy(); this.ballDone(); }
+        });
+      }
     }
 
-    wicket(){
-      state.wkts++;
-      this.flashMsg("Bowled! 🧹");
-      this.ballDone();
-      if(state.wkts >= 10){ this.endInnings(); }
-    }
+    const cfg = {
+      type: Phaser.AUTO, parent:'game', width: W, height: H, backgroundColor:'#0b1220',
+      physics:{ default:'arcade', arcade:{ debug:false } },
+      scene:[Main]
+    };
+    const game = new Phaser.Game(cfg);
 
-    endInnings(){
-      state.gameOver = true;
-      this.flashMsg(`Innings complete: ${state.runs}/${state.wkts}`);
-    }
-
-    updateHUD(){
-      const oBalls = (state.over*POP.overBalls);
-      const ballsThisOver = state.balls - oBalls;
-      const overText = `${state.over}.${ballsThisOver}`;
-      const left = POP.totalOvers*POP.overBalls - state.balls;
-      document.getElementById('hud').innerHTML =
-        `<b>Score:</b> ${state.runs}/${state.wkts} &nbsp; • &nbsp; <b>Overs:</b> ${overText} &nbsp; • &nbsp; <b>Balls left:</b> ${left}`;
-    }
-
-    flashMsg(txt){
-      const t = this.add.text(W/2, H*0.3, txt, {fontFamily:'system-ui,Segoe UI', fontSize: 22, color:'#e6edf6'})
-                   .setAlpha(0).setOrigin(0.5);
-      this.tweens.add({targets:t, alpha:1, y:t.y-10, duration:200, yoyo:false});
-      this.time.delayedCall(1100, ()=> t.destroy());
-      this.updateHUD();
-    }
-
-    update(_, dt){
-      // movement
-      const left = this.cursors.left.isDown || this.keys.A.isDown || this.leftHeldRef();
-      const right = this.cursors.right.isDown || this.keys.D.isDown || this.rightHeldRef();
-      if(left && !right) this.batter.x = Math.max(this.playerXMin, this.batter.x - POP.playerSpeed*dt/1000);
-      else if(right && !left) this.batter.x = Math.min(this.playerXMax, this.batter.x + POP.playerSpeed*dt/1000);
-      this.bat.x = this.batter.x + 26;
-
-      // swing key
-      if(Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.trySwing();
-
-      // wicket check (ball reaches wicket zone without being hit)
-      this.balls.children.each((bObj)=>{
-        const b = bObj; if(!b || !b.body || b.hit) return;
-        if(b.y > this.wicketZone.y && b.x > this.wicketZone.x && b.x < this.wicketZone.x + this.wicketZone.width){
-          b.hit = true; b.destroy(); this.wicket();
-        } else if(b.y > H+20){ b.destroy(); this.ballDone(); } // bye/legbye treated as ball done
-      });
-    }
+    <script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/service-worker.js")
+      .catch(console.error);
   }
-
-  const cfg = {
-    type: Phaser.AUTO, parent:'game', width: W, height: H, backgroundColor:'#0b1220',
-    physics:{ default:'arcade', arcade:{ debug:false } },
-    scene:[Main]
-  };
-  new Phaser.Game(cfg);
-})();
 </script>
+
+
+    // topbar wiring
+    const oversSel = document.getElementById('oversSel');
+    const newBtn   = document.getElementById('newBtn');
+    oversSel.value = localStorage.getItem('overs') || '2';
+    oversSel.onchange = ()=> localStorage.setItem('overs', oversSel.value);
+
+    newBtn.onclick = ()=>{
+      state = { runs:0, wkts:0, balls:0, over:0, swinging:false, lastSwingT:0, gameOver:false };
+      game.scene.keys.main.scene.restart();
+    };
+  })();
+  </script>
 </body>
 </html>
+
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js')
+    .then(() => console.log("✅ Service Worker Registered"));
+}
+</script>
+
