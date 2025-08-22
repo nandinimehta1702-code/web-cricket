@@ -41,3 +41,19 @@ self.addEventListener("fetch", (e) => {
     })
   );
 });
+
+
+const CACHE = 'cricket-arcade-v4'; // bump this to force refresh
+const ASSETS = [
+  '/arcade',
+  '/static/game/index.html',
+  '/static/game/manifest.json',
+  '/static/game/assets/bat.png',
+  '/static/game/assets/ball.png',
+  '/static/game/assets/batter_boy.png',
+  '/static/game/assets/batter_girl.png',
+  '/static/game/assets/bowler.png',
+  '/static/game/assets/icon-192.png',
+  '/static/game/assets/icon-512.png',
+  'https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js'
+];
