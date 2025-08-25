@@ -4,96 +4,273 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Cricket Arcade</title>
-
-  <!-- Phaser -->
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
-
   <style>
-    :root { --ink:#e6edf6; --bg:#0b1220; --panel:#0f172a; --line:#334155; --muted:#9aa4b2; --accent:#8ae89a; }
-    html,body { height:100%; margin:0; background:var(--bg); color:var(--ink); font-family:system-ui, Segoe UI, Inter, Roboto, sans-serif;}
-    .wrap { max-width:1000px; margin:0 auto; padding:16px; }
-    #hud { font-size:14px; margin-bottom:10px }
-    #hud b { color:var(--accent) }
-    #stage { position:relative; display:flex; justify-content:center; }
-    #game { width:800px; height:450px; background:var(--bg); border-radius:12px; overflow:hidden }
-    #help { text-align:center; font-size:12px; color:var(--muted); margin:8px 0 0 }
-    #comms { margin-top:14px; background:var(--panel); border:1px solid #1f2937; border-radius:14px; padding:14px; min-height:72px; }
-    #comms h3 { margin:0 0 8px; font-size:14px; color:#cbd5e1 }
-    #feed { font-size:14px; line-height:1.35 }
-    #feed .dim { color:var(--muted) }
-
-    .toolbar { display:flex; gap:10px; margin-bottom:10px; align-items:center; }
-    .select, .btn { background:#111827; border:1px solid #293241; color:var(--ink); border-radius:10px; padding:8px 10px; }
-    .btn { cursor:pointer; }
-    .btn:disabled { opacity:.5; cursor:not-allowed }
-
-    /* mobile buttons */
-    .mobile-keys { position:absolute; bottom:10px; right:10px; display:flex; gap:8px; }
-    .mkey { background:#111827; border:1px solid #293241; border-radius:10px; padding:8px 12px; color:var(--ink); }
-
-    /* avatar modal */
-    #charpick { position:fixed; inset:0; background:#0009; display:none; align-items:center; justify-content:center; z-index:10 }
-    #charbox { background:var(--panel); border:1px solid #1f2937; border-radius:16px; padding:18px 22px; min-width:280px; text-align:center }
-    #charbox h3 { margin:0 0 12px }
-    .row { display:flex; gap:10px; justify-content:center }
+    html,body{margin:0;height:100%;background:#0b1220;color:#e6edf6;font-family:system-ui,Segoe UI,Inter,Roboto,sans-serif}
+    #game{display:flex;align-items:center;justify-content:center;height:100%}
+    .hud{position:absolute;top:10px;left:10px;font-size:14px}
+    .hud b{color:#8ae89a}
+    .help{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);font-size:12px;color:#9aa4b2}
+    .btns{position:absolute;bottom:16px;right:16px;display:flex;gap:8px}
+    .tbtn{background:#111827;border:1px solid #293241;border-radius:10px;padding:10px 14px;color:#e6edf6}
+    @media (pointer:fine){ .btns{display:none} }
+    /* character picker overlay */
+    #charpick{position:fixed;inset:0;background:#0b1220cc;display:none;align-items:center;justify-content:center;z-index:9999}
+    #charpick .card{background:#0f172a;border:1px solid #1f2937;border-radius:16px;padding:18px 22px;min-width:280px;text-align:center;color:#e6edf6}
+    #charpick .row{display:flex;gap:10px;justify-content:center;margin-top:10px}
+    #charBtn{position:absolute;top:10px;right:10px}
+    #charBtn .tbtn{padding:8px 10px}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="toolbar">
-      <select id="overs" class="select">
-        <option value="2" selected>2 overs</option>
-        <option value="3">3 overs</option>
-        <option value="5">5 overs</option>
-      </select>
-      <button id="newBtn" class="btn">New Game</button>
-      <button id="pickBtn" class="btn">Choose Player</button>
-    </div>
+<div id="game"></div>
 
-    <div id="hud"><b>Score:</b> 0/0 • <b>Overs:</b> 0.0 • <b>Balls left:</b> 12</div>
+<!-- HUD -->
+<div class="hud" id="hud"></div>
+<div id="charBtn"><button class="tbtn" id="chooseBtn">Choose Player</button></div>
+<div class="help">← / → (or A / D) to move • SPACE to swing</div>
 
-    <div id="stage">
-      <div id="game"></div>
-      <div class="mobile-keys">
-        <button class="mkey" id="leftBtn">◀</button>
-        <button class="mkey" id="hitBtn">HIT</button>
-        <button class="mkey" id="rightBtn">▶</button>
-      </div>
-    </div>
+<!-- Mobile buttons -->
+<div class="btns">
+  <button class="tbtn" id="leftBtn">◀</button>
+  <button class="tbtn" id="hitBtn">HIT</button>
+  <button class="tbtn" id="rightBtn">▶</button>
+</div>
 
-    <div id="help">← / → (or A / D) to move • SPACE to swing</div>
-
-    <div id="comms">
-      <h3>Commentary</h3>
-      <div id="feed"><span class="dim">No balls bowled yet. Play a shot!</span></div>
+<!-- Character picker -->
+<div id="charpick">
+  <div class="card">
+    <h3 style="margin:0 0 10px;font:600 18px system-ui">Choose your player</h3>
+    <div class="row">
+      <button class="tbtn" id="pickBoy">Boy</button>
+      <button class="tbtn" id="pickGirl">Girl</button>
     </div>
   </div>
+</div>
 
-  <!-- Avatar picker -->
-  <div id="charpick">
-    <div id="charbox">
-      <h3>Choose your player</h3>
-      <div class="row">
-        <button id="pickBoy" class="btn">Boy</button>
-        <button id="pickGirl" class="btn">Girl</button>
-      </div>
-    </div>
-  </div>
+<script>
+(() => {
+  const W = 980, H = 560;
+  const PITCH_XL = 120, PITCH_XR = W-120;
 
-  <script>
-    // show picker if not set
-    const picker = document.getElementById('charpick');
-    const saved = localStorage.getItem('avatar');
-    if (!saved) picker.style.display = 'flex';
-    document.getElementById('pickBtn').onclick = () => { picker.style.display = 'flex'; };
-    document.getElementById('pickBoy').onclick  = () => { localStorage.setItem('avatar','boy');  picker.style.display='none'; window.Game?.reload(); };
-    document.getElementById('pickGirl').onclick = () => { localStorage.setItem('avatar','girl'); picker.style.display='none'; window.Game?.reload(); };
+  // gameplay constants
+  const POP = {
+    ballSpeed: 300,
+    spawnEveryMs: 1650,
+    batCooldownMs: 520,
+    playerSpeed: 300,
+    overBalls: 6,
+    totalOvers: 2
+  };
 
-    // boot game
-    document.getElementById('newBtn').onclick = () => window.Game?.newMatch();
-  </script>
+  // state
+  let state = { runs:0, wkts:0, balls:0, over:0, swinging:false, lastSwingT:0, gameOver:false };
 
-  <!-- the actual game -->
-  <script src="/static/game/game.js"></script>
+  // character choice
+  const getAvatar = () => localStorage.getItem('avatar') || 'boy';
+  const setAvatar = v => localStorage.setItem('avatar', v);
+
+  // show picker on first visit
+  const pick = document.getElementById('charpick');
+  if (!localStorage.getItem('avatar')) pick.style.display='flex';
+  document.getElementById('chooseBtn').onclick = () => { pick.style.display='flex'; };
+  document.getElementById('pickBoy').onclick = () => { setAvatar('boy'); pick.style.display='none'; location.reload(); };
+  document.getElementById('pickGirl').onclick = () => { setAvatar('girl'); pick.style.display='none'; location.reload(); };
+
+  class Main extends Phaser.Scene {
+    constructor(){ super('main'); }
+
+    preload() {
+      // load your PNGs from static/game/assets
+      this.load.image('batter_boy',  'assets/batter_boy.png');
+      this.load.image('batter_girl', 'assets/batter_girl.png');
+      this.load.image('bowler',      'assets/bowler.png');
+      this.load.image('bat',         'assets/bat.png');
+      this.load.image('ball',        'assets/ball.png');
+    }
+
+    create() {
+      // background blocks
+      this.add.rectangle(W/2,H/2,W,H,0x0f172a).setDepth(-5);
+      // pitch area + strip
+      this.add.rectangle(W/2, H*0.75, W*0.86, 140, 0x0a0f1a).setDepth(-2);
+      this.add.rectangle(W/2, H*0.66, W*0.86, 8, 0x334155).setDepth(-1);
+
+      // bowler
+      this.bowler = this.add.image(W/2, 110, 'bowler').setScale(0.45).setDepth(1);
+
+      // batter & bat
+      const avatarKey = getAvatar()==='girl' ? 'batter_girl' : 'batter_boy';
+      this.batter = this.add.image(W/2, H-110, avatarKey).setScale(0.55).setDepth(5);
+      this.bat    = this.add.image(W/2+46, H-140, 'bat').setScale(0.55).setOrigin(0.1,0.95).setDepth(6);
+      this.bat.setAngle(-10);
+
+      // keep batter within pitch bounds
+      this.playerXMin = PITCH_XL;
+      this.playerXMax = PITCH_XR;
+
+      // physics group for balls
+      this.balls = this.physics.add.group({ allowGravity:false });
+
+      // keyboard
+      this.cursors = this.input.keyboard.createCursorKeys();
+      this.keys = this.input.keyboard.addKeys({
+        A:Phaser.Input.Keyboard.KeyCodes.A,
+        D:Phaser.Input.Keyboard.KeyCodes.D,
+        SPACE:Phaser.Input.Keyboard.KeyCodes.SPACE
+      });
+
+      // mobile buttons
+      this.leftHeld=false; this.rightHeld=false;
+      document.getElementById('leftBtn').onpointerdown = ()=>this.leftHeld=true;
+      document.getElementById('leftBtn').onpointerup   = ()=>this.leftHeld=false;
+      document.getElementById('rightBtn').onpointerdown= ()=>this.rightHeld=true;
+      document.getElementById('rightBtn').onpointerup  = ()=>this.rightHeld=false;
+      document.getElementById('hitBtn').onclick        = ()=>this.trySwing();
+
+      // spawn balls
+      this.time.addEvent({ delay: POP.spawnEveryMs, loop:true, callback: ()=>this.spawnBall() });
+
+      // HUD
+      this.hudEl = document.getElementById('hud');
+      this.updateHUD();
+    }
+
+    spawnBall(){
+      if(state.gameOver) return;
+
+      const lineX = Phaser.Math.Between(this.playerXMin+10, this.playerXMax-10);
+      // create from bowler's hand-ish
+      const ball = this.physics.add.image(this.bowler.x, this.bowler.y+40, 'ball')
+        .setScale(0.25).setDepth(3);
+      ball.body.allowGravity = false;
+
+      // velocity towards the chosen line near batter
+      const targetY = this.batter.y - 30;
+      const dx = (lineX - this.bowler.x) * 0.38;
+      const dy = POP.ballSpeed;
+      ball.setVelocity(dx, dy);
+      ball.hit = false;
+
+      // clean up after 6s
+      this.time.delayedCall(6000, ()=> ball.destroy());
+    }
+
+    trySwing(){
+      if(state.gameOver) return;
+      const now = this.time.now;
+      if(state.swinging || (now - state.lastSwingT) < POP.batCooldownMs) return;
+
+      state.swinging = true;
+      state.lastSwingT = now;
+      // quick swing anim
+      this.tweens.add({ targets:this.bat, angle:-70, duration:120, yoyo:true,
+                        onComplete:()=>{ state.swinging=false; } });
+
+      // check contact slightly after swing starts
+      this.time.delayedCall(80, ()=> this.checkContact());
+    }
+
+    checkContact(){
+      // contact area by bat tip
+      const rad = Phaser.Math.DegToRad(this.bat.angle);
+      const tipX = this.bat.x + Math.cos(rad) * 60;
+      const tipY = this.bat.y + Math.sin(rad) * 10;
+      const zone = new Phaser.Geom.Circle(tipX, tipY, 36);
+
+      this.balls.children.each((b)=>{
+        if(!b || !b.body || b.hit) return;
+        const bc = new Phaser.Geom.Circle(b.x,b.y,18);
+        if(Phaser.Geom.Intersects.CircleToCircle(zone, bc)){
+          b.hit = true;
+          // launch away
+          const perfect = Math.abs(b.x - this.batter.x) < 20;
+          const power = perfect ? Phaser.Math.Between(520, 620) : Phaser.Math.Between(340, 460);
+          const vx = (b.x - this.batter.x)*1.8 + Phaser.Math.Between(-60,60);
+          b.setVelocity(vx, -power).setDepth(4);
+          this.scored(perfect ? 6 : (power>520?6 : power>460?4 : power>380?2 : 1));
+        }
+      });
+    }
+
+    scored(r){
+      state.runs += r;
+      this.ballDone();
+      this.flash(r>=4 ? (r===6? "SIX! 💥" : "FOUR! ✨") : (r===2? "Two runs." : "Single."));
+    }
+
+    wicket(){
+      state.wkts++;
+      this.ballDone();
+      this.flash("Bowled! 🧹");
+      if(state.wkts >= 10){ this.endInnings(); }
+    }
+
+    ballDone(){
+      state.balls++;
+      if(state.balls % POP.overBalls === 0){
+        state.over++;
+        if(state.over >= POP.totalOvers){ this.endInnings(); return; }
+        this.flash(`Over ${state.over}/${POP.totalOvers}.`);
+      }
+      this.updateHUD();
+    }
+
+    endInnings(){
+      state.gameOver = true;
+      this.flash(`Innings complete: ${state.runs}/${state.wkts}`);
+    }
+
+    updateHUD(){
+      const oBalls = state.over*POP.overBalls;
+      const ballsThisOver = state.balls - oBalls;
+      const overText = `${state.over}.${ballsThisOver}`;
+      const left = POP.totalOvers*POP.overBalls - state.balls;
+      this.hudEl.innerHTML = `<b>Score:</b> ${state.runs}/${state.wkts} &nbsp; • &nbsp;
+                               <b>Overs:</b> ${overText} &nbsp; • &nbsp;
+                               <b>Balls left:</b> ${left}`;
+    }
+
+    flash(txt){
+      const t = this.add.text(W/2, H*0.30, txt, {fontFamily:'system-ui,Segoe UI', fontSize:22, color:'#e6edf6'})
+                   .setAlpha(0).setOrigin(0.5).setDepth(10);
+      this.tweens.add({targets:t, alpha:1, y:t.y-10, duration:200});
+      this.time.delayedCall(1100, ()=> t.destroy());
+    }
+
+    update(_, dt){
+      // movement
+      const left  = this.cursors.left.isDown || this.keys.A.isDown || this.leftHeld;
+      const right = this.cursors.right.isDown || this.keys.D.isDown || this.rightHeld;
+
+      if(left && !right) this.batter.x = Math.max(this.playerXMin, this.batter.x - POP.playerSpeed*dt/1000);
+      else if(right && !left) this.batter.x = Math.min(this.playerXMax, this.batter.x + POP.playerSpeed*dt/1000);
+
+      // keep bat anchored to batter
+      this.bat.x = this.batter.x + 46;
+      this.bat.y = this.batter.y - 30;
+
+      // swing key
+      if(Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.trySwing();
+
+      // wicket check: any ball entering wicket rectangle (behind batter)
+      const wkX = this.batter.x - 28, wkW = 56;
+      this.balls.children.each((b)=>{
+        if(!b || !b.body || b.hit) return;
+        if(b.y > this.batter.y - 20 && b.x > wkX && b.x < wkX + wkW){
+          b.hit = true; b.destroy(); this.wicket();
+        } else if(b.y > H+20){ b.destroy(); this.ballDone(); }
+      });
+    }
+  }
+
+  const cfg = {
+    type: Phaser.AUTO, parent:'game', width: W, height: H, backgroundColor:'#0b1220',
+    physics:{ default:'arcade', arcade:{ debug:false } },
+    scene:[Main]
+  };
+  new Phaser.Game(cfg);
+})();
+</script>
 </body>
 </html>
