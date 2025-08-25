@@ -1,210 +1,229 @@
 (() => {
-  const W=800, H=450, XMIN=80, XMAX=W-80;
+  // ---------- config ----------
+  const W = 1000, H = 560;
+  const RANGE_XL = 140, RANGE_XR = W - 140;
 
-  // global refs
-  const hud = document.getElementById('hud');
-  const feed = document.getElementById('feed');
-  const leftBtn  = document.getElementById('leftBtn');
-  const rightBtn = document.getElementById('rightBtn');
-  const hitBtn   = document.getElementById('hitBtn');
-  const oversSel = document.getElementById('overs');
-
-  // tiny synth SFX (no files)
-  const ding = (freq=660, dur=0.08, type='square')=>{
-    const ac=new (window.AudioContext||window.webkitAudioContext)();
-    const o=ac.createOscillator(), g=ac.createGain();
-    o.frequency.value=freq; o.type=type; o.connect(g); g.connect(ac.destination);
-    g.gain.setValueAtTime(.15, ac.currentTime);
-    g.gain.exponentialRampToValueAtTime(.0001, ac.currentTime+dur);
-    o.start(); o.stop(ac.currentTime+dur);
+  const POP = {
+    ballSpeedY: 270,         // delivery speed
+    spawnEveryMs: 1600,      // ball every ~1.6s
+    playerSpeed: 320,        // lateral move
+    batCooldownMs: 500,
+    batWindowDelayMs: 90,
+    overBalls: 6,
   };
-  const hitSnd   = ()=>ding(740,.09,'sawtooth');
-  const fourSnd  = ()=>ding(520,.15,'triangle');
-  const sixSnd   = ()=>{ ding(520,.12,'triangle'); setTimeout(()=>ding(880,.12,'triangle'),80); };
-  const outSnd   = ()=>ding(220,.2,'sine');
 
-  // match state
-  let POP = { spawnEveryMs: 1550, ballV: 260, batCooldownMs: 520, playerV: 260,
-              overBalls:6, totalOvers: Number(oversSel.value) };
-  let S = null; // state holder
+  // scale tuning for your images
+  const SCALE = {
+    bowler: 0.35,
+    batter: 0.35,
+    bat:    0.38,
+    ball:   0.14,
+  };
 
+  // ---------- game state ----------
+  const state = {
+    runs: 0, wkts: 0, balls: 0, overs: 2,
+    swinging: false, lastSwing: 0,
+    gameOver: false,
+  };
+
+  const savedAvatar = localStorage.getItem('avatar') || 'boy';
+
+  // ---------- preload/create ----------
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
+
     preload(){
-      const avatar = localStorage.getItem('avatar') === 'girl' ? 'batter_girl' : 'batter_boy';
-      this.avatarKey = avatar;
+      // images must exist at these paths
       this.load.image('bowler', '/static/game/assets/bowler.png');
-      this.load.image('ball',   '/static/game/assets/ball.png');
+      this.load.image('batter_boy', '/static/game/assets/batter_boy.png');
+      this.load.image('batter_girl','/static/game/assets/batter_girl.png');
       this.load.image('bat',    '/static/game/assets/bat.png');
-      this.load.image('batter_boy',  '/static/game/assets/batter_boy.png');
-      this.load.image('batter_girl', '/static/game/assets/batter_girl.png');
+      this.load.image('ball',   '/static/game/assets/ball.png');
     }
+
     create(){
-      S = { runs:0, wkts:0, balls:0, over:0, gameOver:false, swinging:false, lastSwing:0 };
-      this.cursors = this.input.keyboard.createCursorKeys();
-      this.keys = this.input.keyboard.addKeys({A:65, D:68, SPACE:32});
+      // background + pitch
+      this.add.rectangle(W/2, H/2, W, H, 0x0b1220).setDepth(0);
+      this.add.rectangle(W/2, H*0.62, W*0.86, 8, 0x334155).setDepth(1);
+      this.add.rectangle(W/2, H*0.78, W*0.86, 140, 0x0a0f1a).setDepth(1);
 
-      // simple ground / pitch
-      this.add.rectangle(W/2,H/2,W,H,0x0f172a);
-      this.add.rectangle(W/2,H*0.62,W*0.86,8,0x334155);
-      this.add.rectangle(W/2,H*0.78,W*0.86,120,0x0a0f1a);
+      // bowler
+      this.bowler = this.add.image(W/2, 110, 'bowler').setScale(SCALE.bowler).setDepth(2);
 
-      // bowler/batter
-      this.add.image(W/2, 86, 'bowler').setOrigin(.5,1).setScale(.35);
-      this.batter = this.add.image(W/2, H-72, this.avatarKey).setOrigin(.5,1).setScale(.42);
-      this.bat    = this.add.image(W/2+28, H-64, 'bat').setOrigin(.2,.95).setScale(.42).setAngle(0);
+      // batter + bat
+      const key = (localStorage.getItem('avatar') || 'boy') === 'girl' ? 'batter_girl' : 'batter_boy';
+      this.batter = this.add.image(W/2, H-110, key).setScale(SCALE.batter).setDepth(4);
+      this.bat = this.add.image(this.batter.x + 36, this.batter.y - 16, 'bat')
+                     .setScale(SCALE.bat).setOrigin(0.25, 1.0).setDepth(5).setAngle(0);
 
-      // wicket zone
-      this.wicketZone = new Phaser.Geom.Rectangle(W/2-36, H-86, 72, 10);
+      // wicket zone (invisible collider area)
+      this.wicketZone = new Phaser.Geom.Rectangle(W/2 - 30, H-96, 60, 16);
 
-      // balls group
+      // physics group for balls
       this.balls = this.physics.add.group({ allowGravity:false });
 
-      // spawner
-      this.spawnTimer = this.time.addEvent({ delay: POP.spawnEveryMs, loop:true, callback: ()=>this.spawnBall() });
+      // controls
+      this.cursors = this.input.keyboard.createCursorKeys();
+      this.keys = this.input.keyboard.addKeys({
+        A:Phaser.Input.Keyboard.KeyCodes.A,
+        D:Phaser.Input.Keyboard.KeyCodes.D,
+        SPACE:Phaser.Input.Keyboard.KeyCodes.SPACE
+      });
 
-      // mobile controls
+      // mobile buttons
+      const leftBtn  = document.getElementById('leftBtn');
+      const rightBtn = document.getElementById('rightBtn');
+      const hitBtn   = document.getElementById('hitBtn');
       let leftHeld=false, rightHeld=false;
-      leftBtn.onpointerdown = ()=>leftHeld=true;
-      leftBtn.onpointerup = leftBtn.onpointercancel = ()=>leftHeld=false;
-      rightBtn.onpointerdown = ()=>rightHeld=true;
-      rightBtn.onpointerup = rightBtn.onpointercancel = ()=>rightHeld=false;
-      hitBtn.onclick = ()=>this.trySwing();
+      leftBtn.onpointerdown = ()=> leftHeld = true;
+      leftBtn.onpointerup   = leftBtn.onpointercancel = ()=> leftHeld=false;
+      rightBtn.onpointerdown = ()=> rightHeld = true;
+      rightBtn.onpointerup   = rightBtn.onpointercancel = ()=> rightHeld=false;
+      hitBtn.onclick = ()=> this.trySwing();
+      this.leftHeldRef = ()=> leftHeld;
+      this.rightHeldRef = ()=> rightHeld;
 
-      this.leftHeld = ()=>leftHeld;
-      this.rightHeld= ()=>rightHeld;
+      // UI: overs/new/pick
+      document.getElementById('overs').onchange = (e)=>{
+        const val = e.target.value.split(' ')[0]; // "2 over(s)"
+        state.overs = parseInt(val, 10) || 2;
+        this.resetInnings();
+      };
+      document.getElementById('newBtn').onclick = ()=> this.resetInnings();
+      document.getElementById('pickBtn').onclick = ()=>{
+        const next = (localStorage.getItem('avatar') || 'boy') === 'boy' ? 'girl' : 'boy';
+        localStorage.setItem('avatar', next);
+        this.swapAvatar(next);
+      };
 
-      // first HUD
-      renderHUD(); say('No balls bowled yet. Play a shot!', true);
+      // start bowling
+      this.spawnTimer = this.time.addEvent({
+        delay: POP.spawnEveryMs, loop: true, callback: ()=> this.spawnBall()
+      });
+
+      this.updateHUD();
+    }
+
+    swapAvatar(who){
+      const key = who === 'girl' ? 'batter_girl' : 'batter_boy';
+      this.batter.setTexture(key);
+      // keep scale & position
+    }
+
+    resetInnings(){
+      state.runs = 0; state.wkts = 0; state.balls = 0; state.gameOver = false;
+      // clear any live balls
+      this.balls.getChildren().forEach(b => b.destroy());
+      this.updateHUD();
     }
 
     spawnBall(){
-      if (S.gameOver) return;
-      const lineX = Phaser.Math.FloatBetween(XMIN+20, XMAX-20);
-      const ball = this.physics.add.image(W/2, 118, 'ball').setScale(.24);
-      ball.setVelocity((lineX - W/2) * 0.35, POP.ballV);
-      ball.hit=false;
-      this.balls.add(ball);
-      this.time.delayedCall(6500, ()=> ball.destroy());
+      if(state.gameOver) return;
+      const lineX = Phaser.Math.Between(RANGE_XL, RANGE_XR);
+      const img = this.add.image(W/2, 150, 'ball').setScale(SCALE.ball).setDepth(3);
+      const body = this.physics.add.existing(img);
+      body.body.allowGravity = false;
+      body.body.setVelocity((lineX - W/2) * 0.45, POP.ballSpeedY);
+      img.hit = false;
+
+      // destroy after a while to avoid leaks
+      this.time.delayedCall(7000, ()=> img.destroy());
+      this.balls.add(img);
     }
 
     trySwing(){
-      if (S.gameOver) return;
-      const now=this.time.now;
-      if (S.swinging) return;
-      if (now - S.lastSwing < POP.batCooldownMs) return;
+      if(state.gameOver) return;
+      const now = this.time.now;
+      if(state.swinging || now - state.lastSwing < POP.batCooldownMs) return;
 
-      S.swinging=true; S.lastSwing=now;
-      this.tweens.add({ targets:this.bat, angle:-70, duration:130, yoyo:true,
-                        onComplete:()=>{ S.swinging=false; } });
-      this.time.delayedCall(70, ()=> this.checkContact());
+      state.swinging = true;
+      state.lastSwing = now;
+
+      // swing anim
+      this.tweens.add({
+        targets: this.bat, angle: -70, duration: 140, yoyo: true,
+        onComplete: ()=> { state.swinging = false; }
+      });
+
+      // check contact slightly after starting swing
+      this.time.delayedCall(POP.batWindowDelayMs, ()=> this.checkContact());
     }
 
     checkContact(){
-      // approximate tip
-      const tip = new Phaser.Math.Vector2(this.bat.x, this.bat.y)
-                   .add(new Phaser.Math.Vector2(44, -6).rotate(Phaser.Math.DegToRad(this.bat.angle)));
-      const zone = new Phaser.Geom.Circle(tip.x, tip.y, 34);
+      // circle near bat tip
+      const rad = Phaser.Math.DegToRad(this.bat.angle - 90);
+      const tipX = this.bat.x + Math.cos(rad) * 48;
+      const tipY = this.bat.y + Math.sin(rad) * 48;
+      const zone = new Phaser.Geom.Circle(tipX, tipY, 30);
 
-      this.balls.children.each(obj=>{
-        const b=obj; if(!b || !b.body || b.hit) return;
-        if (Phaser.Geom.Intersects.CircleToRectangle(new Phaser.Geom.Circle(b.x,b.y,10), zone)) {
-          b.hit=true; hitSnd();
-          // launch
-          const perfect = Math.abs(b.x - this.batter.x) < 24;
-          const power = perfect ? Phaser.Math.FloatBetween(420,520) : Phaser.Math.FloatBetween(300,380);
-          const vx = (b.x - this.batter.x) * 2 + Phaser.Math.FloatBetween(-60,60);
-          b.setVelocity(vx, -power);
-
+      this.balls.getChildren().forEach(b => {
+        if(!b || b.hit || !b.body) return;
+        const c = new Phaser.Geom.Circle(b.x, b.y, 20);
+        if(Phaser.Geom.Intersects.CircleToCircle(zone, c)){
+          b.hit = true;
+          const perfect = Math.abs(b.x - this.batter.x) < 22;
+          const vx = (b.x - this.batter.x) * 3 + Phaser.Math.Between(-80, 80);
+          const vy = perfect ? -520 : Phaser.Math.Between(-420, -320);
+          b.body.setVelocity(vx, vy);
           // score
-          const speed = Math.hypot(vx, power);
-          let runs=1;
-          if (speed>520 || perfect) runs=6; else if (speed>460) runs=4; else if (speed>360) runs=2;
-
-          S.runs += runs;
-          if (runs===6) sixSnd(); else if (runs===4) fourSnd();
-          say(runs>=4 ? (runs===6? 'SIX! 💥' : 'FOUR! ✨') :
-                        (runs===2? 'Two runs.' : 'Single.'));
+          let runs = perfect ? 6 : (Math.abs(vx)+Math.abs(vy) > 720 ? 4 : (Math.abs(vx) > 260 ? 2 : 1));
+          state.runs += runs;
           this.ballDone();
         }
       });
     }
 
     ballDone(){
-      S.balls++;
-      if (S.balls % POP.overBalls === 0){
-        S.over++;
-        say(`Over ${S.over}/${POP.totalOvers}.`);
-        if (S.over >= POP.totalOvers) { this.endInnings(); return; }
+      state.balls++;
+      if(state.balls >= state.overs * POP.overBalls){
+        state.gameOver = true;
       }
-      renderHUD();
+      this.updateHUD();
     }
 
     wicket(){
-      S.wkts++; outSnd(); say('Bowled! 🧹');
+      state.wkts++;
       this.ballDone();
-      if (S.wkts >= 10) this.endInnings();
+      if(state.wkts >= 10) state.gameOver = true;
+      this.updateHUD();
     }
 
-    endInnings(){
-      S.gameOver = true;
-      say(`Innings complete: ${S.runs}/${S.wkts}`);
-      renderHUD();
+    updateHUD(){
+      const o = Math.floor(state.balls / POP.overBalls);
+      const b = state.balls % POP.overBalls;
+      const left = state.overs * POP.overBalls - state.balls;
+      document.getElementById('hud').innerHTML =
+        `<b>Score:</b> ${state.runs}/${state.wkts} &nbsp;•&nbsp; <b>Overs:</b> ${o}.${b} &nbsp;•&nbsp; <b>Balls left:</b> ${left}`;
     }
 
-    update(_,dt){
-      // movement
-      const left  = this.cursors.left.isDown || this.keys.A.isDown || this.leftHeld();
-      const right = this.cursors.right.isDown || this.keys.D.isDown || this.rightHeld();
-      if (left && !right)  this.batter.x = Math.max(XMIN, this.batter.x - POP.playerV*dt/1000);
-      if (right && !left) this.batter.x = Math.min(XMAX, this.batter.x + POP.playerV*dt/1000);
-      this.bat.x = this.batter.x + 28;
+    update(_, dt){
+      // move batter
+      const left = this.cursors.left.isDown || this.keys.A.isDown || this.leftHeldRef();
+      const right= this.cursors.right.isDown|| this.keys.D.isDown || this.rightHeldRef();
+      if(left && !right)  this.batter.x = Math.max(RANGE_XL, this.batter.x - POP.playerSpeed * dt/1000);
+      if(right && !left) this.batter.x = Math.min(RANGE_XR, this.batter.x + POP.playerSpeed * dt/1000);
+      // keep bat next to batter
+      this.bat.x = this.batter.x + 36;
 
-      // swing
-      if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.trySwing();
+      if(Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.trySwing();
 
-      // wicket or dead ball
-      this.balls.children.each(obj=>{
-        const b=obj; if(!b || !b.body || b.hit) return;
-        if (b.y > this.wicketZone.y && b.x > this.wicketZone.x && b.x < this.wicketZone.x + this.wicketZone.width){
-          b.hit=true; b.destroy(); this.wicket();
-        } else if (b.y > H+24){
-          b.destroy(); this.ballDone(); // leg-bye/bye as ball used
+      // wicket check / ball finished
+      this.balls.getChildren().forEach(b => {
+        if(!b || !b.body || b.hit) return;
+        if(b.y > this.wicketZone.y && b.x > this.wicketZone.x && b.x < this.wicketZone.x + this.wicketZone.width){
+          b.hit = true; b.destroy(); this.wicket();
+        } else if (b.y > H + 40) {
+          b.destroy(); this.ballDone();
         }
       });
     }
   }
 
-  // HUD + commentary helpers
-  function renderHUD(){
-    const ballsUsed = S.balls % POP.overBalls;
-    const left = POP.totalOvers * POP.overBalls - S.balls;
-    hud.innerHTML = `<b>Score:</b> ${S.runs}/${S.wkts} • <b>Overs:</b> ${S.over}.${ballsUsed} • <b>Balls left:</b> ${left}`;
-  }
-  function say(line, dim=false){
-    if (dim && feed.querySelector('.dim')) return; // keep only one starter
-    if (dim) { feed.innerHTML = `<span class="dim">${line}</span>`; return; }
-    if (feed.querySelector('.dim')) feed.innerHTML = '';
-    const div=document.createElement('div'); div.textContent = '• ' + line; feed.prepend(div);
-    const nodes=feed.querySelectorAll('div'); if (nodes.length>40) nodes[nodes.length-1].remove();
-  }
-
-  // bootstrap Phaser and expose simple API to buttons
-  let game;
-  function boot(){
-    if (game) game.destroy(true);
-    game = new Phaser.Game({
-      type: Phaser.AUTO, parent:'game', width:W, height:H, backgroundColor:'#0b1220',
-      physics:{ default:'arcade', arcade:{ debug:false } },
-      scene:[Main]
-    });
-  }
-  function newMatch(){
-    POP.totalOvers = Number(oversSel.value);
-    boot();
-  }
-  function reload(){ boot(); }
-
-  window.Game = { newMatch, reload };
-  newMatch();
+  const cfg = {
+    type: Phaser.AUTO, parent:'game', width: W, height: H, backgroundColor: '#0b1220',
+    physics: { default:'arcade', arcade:{ debug:false } },
+    scene: [Main]
+  };
+  new Phaser.Game(cfg);
 })();
