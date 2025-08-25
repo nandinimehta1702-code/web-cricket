@@ -332,19 +332,6 @@ def play():
 
 # ---- PWA bits ----
 
-@app.route("/service-worker.js")
-def service_worker():
-    # serve from project root so scope = '/' (controls /arcade and /static)
-    response = send_from_directory(
-        os.path.dirname(os.path.abspath(__file__)),
-        "service-worker.js",
-        mimetype="application/javascript",
-    )
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
-
 @app.get("/arcade")
 def arcade():
     # serves static/game/index.html
